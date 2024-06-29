@@ -1,5 +1,6 @@
 ﻿using Dalamud.Interface.Internal;
 using Dalamud.Interface.Textures;
+using Dalamud.Interface.Textures.TextureWraps;
 using Dalamud.Plugin.Services;
 
 namespace OtterGui.Classes;
