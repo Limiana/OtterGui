@@ -1,9 +1,13 @@
+using Dalamud.Game.ClientState.Keys;
+using Dalamud.Interface.Utility;
 using Dalamud.Plugin.Services;
 using ImGuiNET;
+using OtterGui.Classes;
 using OtterGui.Extensions;
 using OtterGui.Filesystem;
 using OtterGui.Log;
 using OtterGui.Raii;
+using OtterGui.Text;
 
 namespace OtterGui.FileSystem.Selector;
 
@@ -27,7 +31,7 @@ public partial class FileSystemSelector<T, TStateStorage> where T : class where 
 
     // Fired after the selected leaf changed.
     public event SelectionChangeDelegate? SelectionChanged;
-    private FileSystem<T>.Leaf?           _jumpToSelection;
+    private FileSystem<T>.Leaf? _jumpToSelection;
 
     public void ClearSelection()
         => Select(null, AllowMultipleSelection);
@@ -105,7 +109,7 @@ public partial class FileSystemSelector<T, TStateStorage> where T : class where 
         get => _label;
         init
         {
-            _label    = value;
+            _label = value;
             MoveLabel = $"{value}Move";
         }
     }
@@ -160,12 +164,12 @@ public partial class FileSystemSelector<T, TStateStorage> where T : class where 
     public FileSystemSelector(FileSystem<T> fileSystem, IKeyState keyState, Logger log, Action<Exception>? exceptionHandler = null,
         string label = "##FileSystemSelector", bool allowMultipleSelection = false)
     {
-        FileSystem             = fileSystem;
-        _state                 = new List<StateStruct>(FileSystem.Root.TotalDescendants);
-        _keyState              = keyState;
-        Label                  = label;
+        FileSystem = fileSystem;
+        _state = new List<StateStruct>(FileSystem.Root.TotalDescendants);
+        _keyState = keyState;
+        Label = label;
         AllowMultipleSelection = allowMultipleSelection;
-        Log                    = log;
+        Log = log;
 
         InitDefaultContext();
         InitDefaultButtons();
@@ -177,7 +181,7 @@ public partial class FileSystemSelector<T, TStateStorage> where T : class where 
     {
         var window = ImGui.GetContentRegionAvail().X;
 
-        var minimumButtons  = ButtonCount * ImGui.GetFrameHeight();
+        var minimumButtons = ButtonCount * ImGui.GetFrameHeight();
         var minimumAbsolute = MathF.Max(minimumButtons, MinimumAbsoluteSize);
 
         var maximumAbsolute = MathF.Max(minimumAbsolute, window - MinimumAbsoluteRemainder);
@@ -196,8 +200,8 @@ public partial class FileSystemSelector<T, TStateStorage> where T : class where 
     // Everything drawn in here is wrapped in a group.
     protected virtual void DrawLeafName(FileSystem<T>.Leaf leaf, in TStateStorage state, bool selected)
     {
-        var       flag = selected ? ImGuiTreeNodeFlags.Selected | LeafFlags : LeafFlags;
-        using var _    = ImRaii.TreeNode(leaf.Name, flag);
+        var flag = selected ? ImGuiTreeNodeFlags.Selected | LeafFlags : LeafFlags;
+        using var _ = ImRaii.TreeNode(leaf.Name, flag);
     }
 
     public void Draw()
@@ -234,5 +238,148 @@ public partial class FileSystemSelector<T, TStateStorage> where T : class where 
                 Select(leaf, AllowMultipleSelection, GetState(leaf));
                 _jumpToSelection = leaf;
             });
+    }
+
+    public void Draw(float width)
+    {
+        try
+        {
+            DrawPopups();
+            using var group = ImRaii.Group();
+            width = MathF.Round(width);
+            if (DrawList(width))
+            {
+                if (width < 0)
+                    width = ImGui.GetWindowWidth() - width;
+                DrawButtons(width);
+            }
+        }
+        catch (Exception e)
+        {
+            throw new Exception("Exception during FileSystemSelector rendering:\n"
+              + $"{_currentIndex} Current Index\n"
+              + $"{_currentDepth} Current Depth\n"
+              + $"{_currentEnd} Current End\n"
+              + $"{_state.Count} Current State Count\n"
+              + $"{_filterDirty} Filter Dirty", e);
+        }
+    }
+    private void DrawButtons(float width)
+    {
+        var buttonWidth = new Vector2(width / Math.Max(_buttons.Count, 1), ImGui.GetFrameHeight());
+        using var style = ImRaii.PushStyle(ImGuiStyleVar.FrameRounding, 0f)
+            .Push(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
+
+        foreach (var button in _buttons)
+        {
+            button.Item1.Invoke(buttonWidth);
+            ImGui.SameLine();
+        }
+
+        ImGui.NewLine();
+    }
+    // Draw the whole list.
+    private bool DrawList(float width)
+    {
+        // Filter row is outside the child for scrolling.
+        DrawFilterRow(width);
+
+        using (var outerStyle = ImRaii.PushStyle(ImGuiStyleVar.WindowPadding, Vector2.Zero)
+                   .Push(ImGuiStyleVar.ItemSpacing, Vector2.Zero))
+        {
+            using var child = ImRaii.Child(Label, new Vector2(width, -ImGui.GetFrameHeight()), true);
+            outerStyle.Pop(2);
+            MainContext();
+            if (!child)
+                return false;
+
+            ImGui.SetScrollX(0);
+            _stateStorage = ImGui.GetStateStorage();
+            using (var innerStyle = ImRaii.PushStyle(ImGuiStyleVar.IndentSpacing, 14f * ImGuiHelpers.GlobalScale)
+                       .Push(ImGuiStyleVar.ItemSpacing, new Vector2(ImGui.GetStyle().ItemSpacing.X, ImGuiHelpers.GlobalScale))
+                       .Push(ImGuiStyleVar.FramePadding, new Vector2(ImGuiHelpers.GlobalScale, ImGui.GetStyle().FramePadding.Y)))
+            {
+                //// Check if filters are dirty and recompute them before the draw iteration if necessary.
+                ApplyFilters();
+                if (_jumpToSelection != null)
+                {
+                    var idx = _state.FindIndex(s => s.Path == _jumpToSelection);
+                    if (idx >= 0)
+                        ImGui.SetScrollFromPosY(ImGui.GetTextLineHeightWithSpacing() * idx - ImGui.GetScrollY());
+
+                    _jumpToSelection = null;
+                }
+
+                // TODO: do this right.
+                //HandleKeyNavigation();
+                using (var clipper = ImUtf8.ListClipper(_state.Count, ImGui.GetTextLineHeightWithSpacing()))
+                {
+                    // Draw the clipped list.
+
+                    while (clipper.Step())
+                    {
+                        _currentIndex = clipper.DisplayStart;
+                        _currentEnd = Math.Min(_state.Count, clipper.DisplayEnd);
+                        if (_currentIndex >= _currentEnd)
+                            continue;
+
+                        if (_state[_currentIndex].Depth != 0)
+                            DrawPseudoFolders();
+                        _currentEnd = Math.Min(_state.Count, _currentEnd);
+                        for (; _currentIndex < _currentEnd; ++_currentIndex)
+                            DrawStateStruct(_state[_currentIndex]);
+                    }
+                }
+            }
+
+            //// Handle all queued actions at the end of the iteration.
+            HandleActions();
+            outerStyle.Push(ImGuiStyleVar.WindowPadding, Vector2.Zero)
+                .Push(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
+        }
+
+        return true;
+    }
+
+    // Draw the default filter row of a given width.
+    private void DrawFilterRow(float width)
+    {
+        using var style = ImRaii.PushStyle(ImGuiStyleVar.ItemSpacing, Vector2.Zero).Push(ImGuiStyleVar.FrameRounding, 0);
+        (width, var clear) = CustomFilters(width);
+        ImGui.SetNextItemWidth(width);
+        var tmp = FilterValue;
+        using var id = ImRaii.PushId(0, clear);
+        var change = ImGui.InputTextWithHint("##Filter", "Filter...", ref tmp, 128);
+        if (ImGui.IsItemClicked(ImGuiMouseButton.Right) && !ImGui.IsItemFocused())
+        {
+            try
+            {
+                var x = ImGui.GetClipboardText();
+                if (x.Length > 0)
+                {
+                    tmp = x;
+                    change = true;
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+        }
+
+        if (clear)
+            tmp = string.Empty;
+
+        if (clear || change)
+        {
+            if (ChangeFilterInternal(tmp) && ChangeFilter(tmp))
+            {
+                SetFilterDirty();
+            }
+        }
+
+        style.Pop();
+        if (FilterTooltip.Length > 0)
+            ImGuiUtil.HoverTooltip(FilterTooltip);
     }
 }
