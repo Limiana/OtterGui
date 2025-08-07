@@ -16,10 +16,10 @@ public class Table<T>
     protected          bool                   FilterDirty = true;
     protected          bool                   SortDirty   = true;
     protected readonly IReadOnlyCollection<T> Items;
-    internal readonly  List<(T, int)>         FilteredItems;
+    public  List<(T, int)>         FilteredItems;
 
     protected readonly string      Label;
-    protected readonly Column<T>[] Headers;
+    public Column<T>[] Headers;
 
     protected float ItemHeight  { get; set; }
     public    float ExtraHeight { get; set; } = 0;

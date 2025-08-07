@@ -11,6 +11,10 @@ public class ColumnString<TItem> : Column<TItem>
     public    string FilterValue = string.Empty;
     protected Regex? FilterRegex;
 
+    public virtual event EventHandler<TItem>? OnContextMenuRequest;
+
+    public void InvokeContextMenu(TItem e)
+        => OnContextMenuRequest?.Invoke(this, e);
     public virtual string ToName(TItem item)
         => item!.ToString() ?? string.Empty;
 
