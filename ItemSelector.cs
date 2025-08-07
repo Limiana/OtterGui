@@ -7,34 +7,37 @@ namespace OtterGui;
 
 public class ItemSelector<T>
 {
+    public event EventHandler<bool> ItemAdded;
+    public event EventHandler<bool> ItemDeleted;
+    public event EventHandler<bool> ItemSkipTriggered;
     [Flags]
     public enum Flags : byte
     {
-        None      = 0x00, // Just a list
-        Delete    = 0x01, // Add a delete button for the current element (Trashcan), uses OnDelete
-        Add       = 0x02, // Add an Add button to create a new empty element given a name (Plus), uses OnAdd
-        Import    = 0x04, // Add an Import button to create a new element from the string in your clipboard (Clipboard), uses OnImport
+        None = 0x00, // Just a list
+        Delete = 0x01, // Add a delete button for the current element (Trashcan), uses OnDelete
+        Add = 0x02, // Add an Add button to create a new empty element given a name (Plus), uses OnAdd
+        Import = 0x04, // Add an Import button to create a new element from the string in your clipboard (Clipboard), uses OnImport
         Duplicate = 0x08, // Add a Duplicate button to create copy of the currently selected element given a name, uses OnDuplicate
 
         Filter = 0x10, // Add a filter up top that filters the visible elements and uses Filtered.
-        Move   = 0x20, // Items can be moved by drag and drop, uses OnMove.
-        Drop   = 0x40, // Items can be dropped onto, uses OnDrop. Create Sources with CreateDropSource.
+        Move = 0x20, // Items can be moved by drag and drop, uses OnMove.
+        Drop = 0x40, // Items can be dropped onto, uses OnDrop. Create Sources with CreateDropSource.
 
         ButtonMask = 0x0F,
-        All        = 0x7F,
+        All = 0x7F,
     }
 
     // Initial setup.
-    protected readonly IList<T> Items;
-    private readonly   Flags    _flags;
-    private readonly   byte     _numButtons;
+    public IList<T> Items;
+    private readonly Flags _flags;
+    private readonly byte _numButtons;
 
     // Used by Filter
     // Indices of the currently available items after Filtered.
     protected readonly List<int> FilteredItems;
-    protected          string    Filter      = string.Empty;
-    protected          bool      FilterDirty = true;
-    private            int       _lastSize;
+    protected string Filter = string.Empty;
+    protected bool FilterDirty = true;
+    private int _lastSize;
 
     // Used by Add, Duplicate and Import buttons
     private string _newName = string.Empty;
@@ -50,20 +53,20 @@ public class ItemSelector<T>
         get => _label;
         init
         {
-            _label        = value;
+            _label = value;
             DragDropLabel = $"{value}DragDrop";
-            MoveLabel     = $"{value}Move";
+            MoveLabel = $"{value}Move";
         }
     }
 
     public readonly string DragDropLabel = "##ItemSelectorDragDrop";
-    public readonly string MoveLabel     = "##ItemSelectorMove";
+    public readonly string MoveLabel = "##ItemSelectorMove";
 
     public ItemSelector(IList<T> items, Flags flags = Flags.None)
     {
-        Items         = items;
-        _lastSize     = Items.Count;
-        _flags        = flags;
+        Items = items;
+        _lastSize = Items.Count;
+        _flags = flags;
         FilteredItems = Enumerable.Range(0, Items.Count).ToList();
         _numButtons = (byte)(_flags & Flags.ButtonMask) switch
         {
@@ -82,7 +85,7 @@ public class ItemSelector<T>
             0x0D => 3,
             0x0E => 3,
             0x0F => 4,
-            _    => 0,
+            _ => 0,
         };
         Label = "##ItemSelector";
         SetCurrent(0);
@@ -132,12 +135,12 @@ public class ItemSelector<T>
 
     // Selection
     public int CurrentIdx = 0;
-    public T?  Current { get; private set; }
+    public T? Current { get; set; }
 
     protected void ClearCurrentSelection()
     {
         CurrentIdx = -1;
-        Current    = default;
+        Current = default;
     }
 
     public void TryRestoreCurrent()
@@ -152,12 +155,12 @@ public class ItemSelector<T>
         if (idx < Items.Count)
         {
             CurrentIdx = idx;
-            Current    = Items[idx];
+            Current = Items[idx];
         }
         else if (Items.Count > 0)
         {
             CurrentIdx = Items.Count - 1;
-            Current    = Items.Last();
+            Current = Items.Last();
         }
         else
         {
@@ -183,7 +186,7 @@ public class ItemSelector<T>
 
 
     // Customization points.
-    protected virtual bool OnDraw(int idx)
+    protected virtual bool OnDraw(int idx, out bool changes)
         => throw new NotImplementedException();
 
     protected virtual bool Filtered(int idx)
@@ -213,10 +216,15 @@ public class ItemSelector<T>
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() + ImGui.GetStyle().FramePadding.X);
         // Assume that OnDraw functions like a Selectable, if it returns true, select the value.
         using var id = ImRaii.PushId(idx);
-        if (OnDraw(idx) && idx != CurrentIdx)
+        if (OnDraw(idx, out bool changes) && idx != CurrentIdx)
         {
             CurrentIdx = idx;
-            Current    = Items[idx];
+            Current = Items[idx];
+        }
+
+        if (changes)
+        {
+            ItemSkipTriggered.Invoke(this, changes);
         }
 
         // If the ItemSelector supports Move, every item is a Move-DragDropSource. The data is the index of the dragged element.
@@ -258,13 +266,13 @@ public class ItemSelector<T>
         if (!_flags.HasFlag(Flags.Filter))
             return;
 
-        var       newFilter = Filter;
-        using var style     = ImRaii.PushStyle(ImGuiStyleVar.FrameRounding, 0);
+        var newFilter = Filter;
+        using var style = ImRaii.PushStyle(ImGuiStyleVar.FrameRounding, 0);
         ImGui.SetNextItemWidth(width);
         var enterPressed = ImUtf8.InputText("##"u8, ref newFilter, "Filter..."u8, ImGuiInputTextFlags.EnterReturnsTrue);
         if (newFilter != Filter)
         {
-            Filter      = newFilter;
+            Filter = newFilter;
             FilterDirty = true;
         }
 
@@ -286,7 +294,7 @@ public class ItemSelector<T>
         if (_lastSize != Items.Count)
         {
             FilterDirty = true;
-            _lastSize   = Items.Count;
+            _lastSize = Items.Count;
         }
 
         if (!FilterDirty)
@@ -309,17 +317,20 @@ public class ItemSelector<T>
         if (ImGui.Button(FontAwesomeIcon.Plus.ToIconString(), Vector2.UnitX * width))
             ImGui.OpenPopup(newNamePopupAdd);
         using var font = ImRaii.PushFont(UiBuilder.DefaultFont);
-        ImGuiUtil.HoverTooltip("Add New");
+        ImGuiUtil.HoverTooltip(AddButtonTooltip());
 
         if (!OpenNameField(newNamePopupAdd, out var newName))
             return;
 
-        if (OnAdd(newName))
+        if (!string.IsNullOrEmpty(newName) && OnAdd(newName))
         {
             TryRestoreCurrent();
             SetFilterDirty();
+            ItemAdded?.Invoke(this, true);
         }
     }
+    protected virtual string AddButtonTooltip()
+        => "Add new item.";
 
     private void DrawImportButton(float width)
     {
@@ -346,7 +357,7 @@ public class ItemSelector<T>
         newName = string.Empty;
         if (ImGuiUtil.OpenNameField(popupName, ref _newName))
         {
-            newName  = _newName;
+            newName = _newName;
             _newName = string.Empty;
             return true;
         }
@@ -390,6 +401,7 @@ public class ItemSelector<T>
         {
             FilterDirty = true;
             SetCurrent(CurrentIdx > 0 ? CurrentIdx - 1 : CurrentIdx);
+            ItemDeleted?.Invoke(this, true);
         }
     }
 
@@ -398,8 +410,9 @@ public class ItemSelector<T>
         if (_numButtons == 0)
             return;
 
-        using var font        = ImRaii.PushFont(UiBuilder.IconFont);
-        var       buttonWidth = width / _numButtons;
+        ImGui.Dummy(new Vector2(0, 15f));
+        using var font = ImRaii.PushFont(UiBuilder.IconFont);
+        var buttonWidth = width / _numButtons;
 
         if (_flags.HasFlag(Flags.Add))
         {
@@ -433,7 +446,7 @@ public class ItemSelector<T>
         using var id = ImRaii.PushId(Label);
         using var outerStyle = ImRaii.PushStyle(ImGuiStyleVar.FrameRounding, 0)
             .Push(ImGuiStyleVar.WindowPadding, Vector2.Zero)
-            .Push(ImGuiStyleVar.ItemSpacing,   Vector2.Zero);
+            .Push(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
         using var group = ImRaii.Group();
         using (var child = ImRaii.Child(string.Empty, new Vector2(width, -ImGui.GetFrameHeight()), true))
         {
@@ -443,10 +456,10 @@ public class ItemSelector<T>
             outerStyle.Pop(3);
             DrawFilter(width);
             UpdateFilteredItems();
-            ImGuiClip.ClippedDraw(FilteredItems, InternalDraw, ImGui.GetTextLineHeightWithSpacing());
+            ImGuiClip.ClippedDraw(FilteredItems, InternalDraw, ImGui.GetTextLineHeightWithSpacing() + 0.25f);
             outerStyle.Push(ImGuiStyleVar.FrameRounding, 0)
                 .Push(ImGuiStyleVar.WindowPadding, Vector2.Zero)
-                .Push(ImGuiStyleVar.ItemSpacing,   Vector2.Zero);
+                .Push(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
         }
 
         DrawButtons(width);
@@ -459,7 +472,7 @@ public static class ItemDetailsWindow
     {
         using var group = ImRaii.Group();
         using var style = ImRaii.PushStyle(ImGuiStyleVar.WindowPadding, Vector2.Zero);
-        using var id    = ImRaii.PushId(label);
+        using var id = ImRaii.PushId(label);
         using var child = ImRaii.Child(string.Empty, ImGui.GetContentRegionAvail(), true, ImGuiWindowFlags.MenuBar);
         if (!child)
             return;
