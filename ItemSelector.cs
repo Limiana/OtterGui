@@ -410,7 +410,6 @@ public class ItemSelector<T>
         if (_numButtons == 0)
             return;
 
-        ImGui.Dummy(new Vector2(0, 15f));
         using var font = ImRaii.PushFont(UiBuilder.IconFont);
         var buttonWidth = width / _numButtons;
 
@@ -492,3 +491,4 @@ public static class ItemDetailsWindow
         drawDetails();
     }
 }
+
